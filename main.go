@@ -14,9 +14,17 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+// MESSAGE TYPES AND HELPER METHODES
+
 type UserMsg struct {
 	Uid string `json:"uid"`
 	Ts  uint64 `json:"ts"`
+}
+
+type StatMsg struct {
+	Type      StatType
+	Timestamp uint64
+	Value     uint64
 }
 
 type StatType string
@@ -48,41 +56,25 @@ func (s StatType) IntervalFrom(timestamp uint64) uint64 {
 	}
 }
 
-type StatMsg struct {
-	Type      StatType
-	Timestamp uint64
-	Value     uint64
+// PROGRAM STARTS HERE
+func main() {
+	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+
+	r, w := initKafka()
+	defer closeKafka(r, w)
+
+	recivedMessages := make(chan UserMsg, 100)
+	messagesToSend := make(chan StatMsg, 100)
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go ReceiveMessages(ctx, &wg, r, recivedMessages)
+	go ProcessMessages(ctx, &wg, recivedMessages, messagesToSend)
+	go SendMessages(ctx, &wg, w, messagesToSend)
+	wg.Wait()
 }
 
-func ReciveMessages(ctx context.Context, wg *sync.WaitGroup, r *kafka.Reader, outputChannel chan<- UserMsg) {
-	defer wg.Done()
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Println("Done with reciving messages...")
-			close(outputChannel)
-			break
-
-		default:
-			payload, err := r.ReadMessage(ctx)
-			if err != nil {
-				log.Println("Unable to read message: ", err.Error())
-				continue
-			}
-
-			var msg UserMsg
-			err = jsoniter.Unmarshal(payload.Value, &msg)
-			if err != nil {
-				log.Println("Unable to parse message: ", err.Error())
-				continue
-			}
-
-			outputChannel <- msg
-		}
-	}
-}
-
+// PROCESSING MESSAGES FROM INPUT CHANNEL AND ROUTING THEM TO THE OUTPUT CHANNEL
 func ProcessMessages(ctx context.Context, wg *sync.WaitGroup, inputChannel <-chan UserMsg, outputChannel chan<- StatMsg) {
 	defer wg.Done()
 	defer close(outputChannel)
@@ -105,42 +97,7 @@ func ProcessMessages(ctx context.Context, wg *sync.WaitGroup, inputChannel <-cha
 	}
 }
 
-func SendMessages(ctx context.Context, wg *sync.WaitGroup, w *kafka.Writer, inputChannel <-chan StatMsg) {
-	defer wg.Done()
-
-	for statMsg := range inputChannel {
-		json, err := jsoniter.MarshalIndent(statMsg, "", "  ")
-		if err != nil {
-			log.Println("Unable to convert to JSON: ", err.Error())
-			continue
-		}
-
-		err = w.WriteMessages(ctx, kafka.Message{
-			Value: json,
-		})
-		if err != nil {
-			log.Println("Unable to send a message: ", err.Error())
-		}
-	}
-}
-
-func main() {
-	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-
-	r, w := initKafka()
-	defer closeKafka(r, w)
-
-	recivedMessages := make(chan UserMsg, 100)
-	messagesToSend := make(chan StatMsg, 100)
-
-	var wg sync.WaitGroup
-	wg.Add(3)
-	go ReciveMessages(ctx, &wg, r, recivedMessages)
-	go ProcessMessages(ctx, &wg, recivedMessages, messagesToSend)
-	go SendMessages(ctx, &wg, w, messagesToSend)
-	wg.Wait()
-}
-
+// THE ENTIRE POINT OF THE PROGRAM
 func createStatProcessor(ctx context.Context, outputChannel chan<- StatMsg, statType StatType) func(*sync.WaitGroup, UserMsg) {
 	hll := hyperloglog.New()
 	var lastFlush uint64
@@ -165,6 +122,58 @@ func createStatProcessor(ctx context.Context, outputChannel chan<- StatMsg, stat
 		}
 	}
 }
+
+// SENDING AND RECEIVING MESSAGES FROM AND TO KAFKA USING GO CHANNELS
+
+func ReceiveMessages(ctx context.Context, wg *sync.WaitGroup, r *kafka.Reader, outputChannel chan<- UserMsg) {
+	defer wg.Done()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Done with receiving messages...")
+			close(outputChannel)
+			break
+
+		default:
+			payload, err := r.ReadMessage(ctx)
+			if err != nil {
+				log.Println("Unable to read message: ", err.Error())
+				continue
+			}
+
+			var msg UserMsg
+			err = jsoniter.Unmarshal(payload.Value, &msg)
+			if err != nil {
+				log.Println("Unable to parse message: ", err.Error())
+				continue
+			}
+
+			outputChannel <- msg
+		}
+	}
+}
+
+func SendMessages(ctx context.Context, wg *sync.WaitGroup, w *kafka.Writer, inputChannel <-chan StatMsg) {
+	defer wg.Done()
+
+	for statMsg := range inputChannel {
+		json, err := jsoniter.MarshalIndent(statMsg, "", "  ")
+		if err != nil {
+			log.Println("Unable to convert to JSON: ", err.Error())
+			continue
+		}
+
+		err = w.WriteMessages(ctx, kafka.Message{
+			Value: json,
+		})
+		if err != nil {
+			log.Println("Unable to send a message: ", err.Error())
+		}
+	}
+}
+
+// KAFKA SETUP FUNCTIONS
 
 func initKafka() (*kafka.Reader, *kafka.Writer) {
 	kBroker, set := os.LookupEnv("KAFKA_BROKER")
