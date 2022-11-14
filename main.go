@@ -37,6 +37,8 @@ const (
 	Year            = "year_count"
 )
 
+// Takes the timestamp and return the number of seconds to the next
+// minute/day/week/month/year depending on the StatType
 func (s StatType) IntervalFrom(timestamp uint64) uint64 {
 	switch s {
 	case Minute:
@@ -56,7 +58,7 @@ func (s StatType) IntervalFrom(timestamp uint64) uint64 {
 	}
 }
 
-// PROGRAM STARTS HERE
+// Program starts here
 func main() {
 	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 
@@ -74,36 +76,36 @@ func main() {
 	wg.Wait()
 }
 
-// PROCESSING MESSAGES FROM INPUT CHANNEL AND ROUTING THEM TO THE OUTPUT CHANNEL
+// Processing messages from input channel and routing them to the output channel
 func ProcessMessages(ctx context.Context, wg *sync.WaitGroup, inputChannel <-chan UserMsg, outputChannel chan<- StatMsg) {
 	defer wg.Done()
 	defer close(outputChannel)
 
-	processMinute := createStatProcessor(ctx, outputChannel, Minute)
-	processDay := createStatProcessor(ctx, outputChannel, Day)
-	processWeek := createStatProcessor(ctx, outputChannel, Week)
-	processMonth := createStatProcessor(ctx, outputChannel, Month)
-	processYear := createStatProcessor(ctx, outputChannel, Year)
+	processMinute := createStatProcessor(Minute)
+	processDay := createStatProcessor(Day)
+	processWeek := createStatProcessor(Week)
+	processMonth := createStatProcessor(Month)
+	processYear := createStatProcessor(Year)
 
 	for msg := range inputChannel {
 		var wg sync.WaitGroup
 		wg.Add(5)
-		go processMinute(&wg, msg)
-		go processDay(&wg, msg)
-		go processWeek(&wg, msg)
-		go processMonth(&wg, msg)
-		go processYear(&wg, msg)
+		go processMinute(&wg, msg, outputChannel)
+		go processDay(&wg, msg, outputChannel)
+		go processWeek(&wg, msg, outputChannel)
+		go processMonth(&wg, msg, outputChannel)
+		go processYear(&wg, msg, outputChannel)
 		wg.Wait()
 	}
 }
 
-// THE ENTIRE POINT OF THE PROGRAM
-func createStatProcessor(ctx context.Context, outputChannel chan<- StatMsg, statType StatType) func(*sync.WaitGroup, UserMsg) {
+// The entire point of the program
+func createStatProcessor(statType StatType) func(*sync.WaitGroup, UserMsg, chan<- StatMsg) {
 	hll := hyperloglog.New()
 	var lastFlush uint64
 	interval := statType.IntervalFrom(lastFlush)
 
-	return func(wg *sync.WaitGroup, msg UserMsg) {
+	return func(wg *sync.WaitGroup, msg UserMsg, outputChannel chan<- StatMsg) {
 		defer wg.Done()
 
 		hll.Insert([]byte(msg.Uid))
@@ -122,6 +124,8 @@ func createStatProcessor(ctx context.Context, outputChannel chan<- StatMsg, stat
 		}
 	}
 }
+
+// REST OF THE PROGRAM IS BASICALLY BOILERPLATE CODE THAT TALKS TO KAFKA
 
 // SENDING AND RECEIVING MESSAGES FROM AND TO KAFKA USING GO CHANNELS
 
