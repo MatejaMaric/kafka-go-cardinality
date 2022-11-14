@@ -87,8 +87,21 @@ func ProcessMessages(ctx context.Context, wg *sync.WaitGroup, inputChannel <-cha
 	defer wg.Done()
 	defer close(outputChannel)
 
-	for msg := range inputChannel {
+	processMinute := createStatProcessor(ctx, outputChannel, Minute)
+	processDay := createStatProcessor(ctx, outputChannel, Day)
+	processWeek := createStatProcessor(ctx, outputChannel, Week)
+	processMonth := createStatProcessor(ctx, outputChannel, Month)
+	processYear := createStatProcessor(ctx, outputChannel, Year)
 
+	for msg := range inputChannel {
+		var wg sync.WaitGroup
+		wg.Add(5)
+		go processMinute(&wg, msg)
+		go processDay(&wg, msg)
+		go processWeek(&wg, msg)
+		go processMonth(&wg, msg)
+		go processYear(&wg, msg)
+		wg.Wait()
 	}
 }
 
@@ -117,44 +130,18 @@ func main() {
 	r, w := initKafka()
 	defer closeKafka(r, w)
 
-	processMinute := createStatProcessor(ctx, w, Minute)
-	processDay := createStatProcessor(ctx, w, Day)
-	processWeek := createStatProcessor(ctx, w, Week)
-	processMonth := createStatProcessor(ctx, w, Month)
-	processYear := createStatProcessor(ctx, w, Year)
+	recivedMessages := make(chan UserMsg, 100)
+	messagesToSend := make(chan StatMsg, 100)
 
-	for processing := true; processing; {
-		select {
-		case <-ctx.Done():
-			log.Println("Done with message processing...")
-			processing = false
-		default:
-			payload, err := r.ReadMessage(ctx)
-			if err != nil {
-				log.Println("Unable to read message: ", err.Error())
-				break
-			}
-
-			var msg UserMsg
-			err = jsoniter.Unmarshal(payload.Value, &msg)
-			if err != nil {
-				log.Println("Unable to parse message: ", err.Error())
-				break
-			}
-
-			var wg sync.WaitGroup
-			wg.Add(5)
-			go processMinute(&wg, msg)
-			go processDay(&wg, msg)
-			go processWeek(&wg, msg)
-			go processMonth(&wg, msg)
-			go processYear(&wg, msg)
-			wg.Wait()
-		}
-	}
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go ReciveMessages(ctx, &wg, r, recivedMessages)
+	go ProcessMessages(ctx, &wg, recivedMessages, messagesToSend)
+	go SendMessages(ctx, &wg, w, messagesToSend)
+	wg.Wait()
 }
 
-func createStatProcessor(ctx context.Context, w *kafka.Writer, statType StatType) func(wg *sync.WaitGroup, msg UserMsg) {
+func createStatProcessor(ctx context.Context, outputChannel chan<- StatMsg, statType StatType) func(*sync.WaitGroup, UserMsg) {
 	hll := hyperloglog.New()
 	var lastFlush uint64
 	interval := statType.IntervalFrom(lastFlush)
@@ -174,18 +161,7 @@ func createStatProcessor(ctx context.Context, w *kafka.Writer, statType StatType
 			lastFlush = msg.Ts
 			interval = statType.IntervalFrom(lastFlush)
 
-			json, err := jsoniter.MarshalIndent(statMsg, "", "  ")
-			if err != nil {
-				log.Println("Unable to convert to JSON: ", err.Error())
-				return
-			}
-
-			err = w.WriteMessages(ctx, kafka.Message{
-				Value: json,
-			})
-			if err != nil {
-				log.Println("Unable to send a message: ", err.Error())
-			}
+			outputChannel <- statMsg
 		}
 	}
 }
