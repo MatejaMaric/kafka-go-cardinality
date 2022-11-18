@@ -1,4 +1,4 @@
-module kafka-go-cardinality
+module github.com/MatejaMaric/kafka-go-cardinality
 
 go 1.19
 
