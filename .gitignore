@@ -1,3 +1,4 @@
 task
 service
 kafka-go-cardinality
+stream.jsonl.gz

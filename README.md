@@ -20,3 +20,17 @@ KAFKA_BROKER=localhost:9092
 USERS_TOPIC=users
 STATS_TOPIC=stats
 ```
+
+To send messages to a Kafka topic you can use this command:
+
+```
+gzcat stream.jsonl.gz | kafka-console-producer --bootstrap-server localhost:9092 --topic users
+```
+
+To receive messages from Kafka topic, you can use this command:
+
+```
+kafka-console-consumer --bootstrap-server localhost:9092 --topic stats
+```
+
+You can find sample data (`stream.jsonl.gz`) [here](https://tda-public.s3.eu-central-1.amazonaws.com/hire-challenge/stream.jsonl.gz).
