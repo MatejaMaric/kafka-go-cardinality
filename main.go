@@ -129,16 +129,15 @@ func createStatProcessor(statType StatType) func(*sync.WaitGroup, UserMsg, chan<
 
 // SENDING AND RECEIVING MESSAGES FROM AND TO KAFKA USING GO CHANNELS
 
-func ReceiveMessages(ctx context.Context, wg *sync.WaitGroup, r *kafka.Reader, outputChannel chan<- UserMsg) {
+func ReceiveMessages[T any](ctx context.Context, wg *sync.WaitGroup, r *kafka.Reader, outputChannel chan<- T) {
 	defer wg.Done()
 
-processing:
-	for {
+	for processing := true; processing; {
 		select {
 		case <-ctx.Done():
 			log.Println("Done with receiving messages...")
 			close(outputChannel)
-			break processing
+			processing = false
 
 		default:
 			payload, err := r.ReadMessage(ctx)
@@ -147,7 +146,7 @@ processing:
 				continue
 			}
 
-			var msg UserMsg
+			var msg T
 			err = jsoniter.Unmarshal(payload.Value, &msg)
 			if err != nil {
 				log.Println("Unable to parse message: ", err.Error())
@@ -159,11 +158,11 @@ processing:
 	}
 }
 
-func SendMessages(ctx context.Context, wg *sync.WaitGroup, w *kafka.Writer, inputChannel <-chan StatMsg) {
+func SendMessages[T any](ctx context.Context, wg *sync.WaitGroup, w *kafka.Writer, inputChannel <-chan T) {
 	defer wg.Done()
 
-	for statMsg := range inputChannel {
-		json, err := jsoniter.MarshalIndent(statMsg, "", "  ")
+	for msg := range inputChannel {
+		json, err := jsoniter.MarshalIndent(msg, "", "  ")
 		if err != nil {
 			log.Println("Unable to convert to JSON: ", err.Error())
 			continue
