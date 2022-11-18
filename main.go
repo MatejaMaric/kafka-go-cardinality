@@ -132,12 +132,13 @@ func createStatProcessor(statType StatType) func(*sync.WaitGroup, UserMsg, chan<
 func ReceiveMessages(ctx context.Context, wg *sync.WaitGroup, r *kafka.Reader, outputChannel chan<- UserMsg) {
 	defer wg.Done()
 
+processing:
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("Done with receiving messages...")
 			close(outputChannel)
-			break
+			break processing
 
 		default:
 			payload, err := r.ReadMessage(ctx)
