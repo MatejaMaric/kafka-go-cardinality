@@ -36,5 +36,7 @@ func BenchmarkProcessMessages(b *testing.B) {
 
 	go ProcessMessages(ctx, &wg, recivedMessages, messagesToSend)
 
+	for range messagesToSend {
+	}
 	wg.Wait()
 }
