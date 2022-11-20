@@ -2,8 +2,11 @@ package processor
 
 import (
 	"context"
+	"math/rand"
+	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestIntervalFrom(t *testing.T) {
@@ -26,8 +29,13 @@ func BenchmarkProcessMessages(b *testing.B) {
 	messagesToSend := make(chan StatMsg, 100)
 
 	go func() {
+		ts := uint64(time.Now().Unix())
 		for i := 0; i < b.N; i++ {
-			recivedMessages <- UserMsg{"abc", 123}
+			recivedMessages <- UserMsg{
+				Uid: "user" + strconv.Itoa(rand.Intn(100)),
+				Ts:  ts,
+			}
+			ts += uint64(rand.Intn(3600))
 		}
 		close(recivedMessages)
 	}()
